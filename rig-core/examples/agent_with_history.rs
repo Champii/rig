@@ -1,6 +1,6 @@
 use anyhow::Result;
 use rig::{
-    completion::{ChatWithHistory, ToolDefinition},
+    completion::{ChatWithHistory, Message, MessageKind, ToolDefinition},
     providers,
     tool::Tool,
 };
@@ -81,7 +81,14 @@ async fn main() -> Result<(), anyhow::Error> {
     println!("\nSecond response: {}", response2);
     println!("\nFull history:");
     for msg in history2 {
-        println!("{}: {}", msg.role, msg.content);
+        let content = match &msg.kind {
+            MessageKind::Chat(content) => content,
+            MessageKind::ToolCall {
+                name, arguments, ..
+            } => &format!("Calling tool {} with arguments {}", name, arguments),
+            MessageKind::ToolResponse { content, .. } => content,
+        };
+        println!("{}: {}", msg.role, content);
     }
 
     Ok(())

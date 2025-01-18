@@ -17,7 +17,7 @@ use crate::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 
 // ================================================================
 // Main OpenAI Client
@@ -376,24 +376,24 @@ impl From<ApiErrorResponse> for CompletionError {
 impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
     type Error = CompletionError;
 
-    fn try_from(value: CompletionResponse) -> std::prelude::v1::Result<Self, Self::Error> {
+    fn try_from(value: CompletionResponse) -> Result<Self, Self::Error> {
         match value.choices.as_slice() {
             [Choice {
                 message:
                     Message {
-                        tool_calls: Some(calls),
+                        content: None,
+                        tool_calls: Some(tool_calls),
                         ..
                     },
                 ..
-            }, ..]
-                if !calls.is_empty() =>
-            {
-                let call = calls.first().unwrap();
-
+            }, ..] => {
+                let call = tool_calls.first().ok_or_else(|| {
+                    CompletionError::ResponseError("Empty tool_calls array".into())
+                })?;
                 Ok(completion::CompletionResponse {
                     choice: completion::ModelChoice::ToolCall(
                         call.function.name.clone(),
-                        "".to_owned(),
+                        call.id.clone(),
                         serde_json::from_str(&call.function.arguments)?,
                     ),
                     raw_response: value,
@@ -430,6 +430,7 @@ pub struct Message {
     pub role: String,
     pub content: Option<String>,
     pub tool_calls: Option<Vec<ToolCall>>,
+    pub tool_call_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -488,14 +489,14 @@ impl completion::CompletionModel for CompletionModel {
         let mut full_history = if let Some(preamble) = &completion_request.preamble {
             vec![completion::Message {
                 role: "system".into(),
-                content: preamble.clone(),
+                kind: completion::MessageKind::Chat(preamble.clone()),
             }]
         } else {
             vec![]
         };
 
         // Extend existing chat history
-        full_history.append(&mut completion_request.chat_history);
+        full_history.extend(completion_request.chat_history.clone());
 
         // Add context documents to chat history
         let prompt_with_context = completion_request.prompt_with_context();
@@ -503,7 +504,7 @@ impl completion::CompletionModel for CompletionModel {
         // Add context documents to chat history
         full_history.push(completion::Message {
             role: "user".into(),
-            content: prompt_with_context,
+            kind: completion::MessageKind::Chat(prompt_with_context),
         });
 
         let request = if completion_request.tools.is_empty() {
@@ -522,6 +523,8 @@ impl completion::CompletionModel for CompletionModel {
             })
         };
 
+        println!("Request: {:#?}", request);
+
         let response = self
             .client
             .post("/chat/completions")
@@ -535,8 +538,13 @@ impl completion::CompletionModel for CompletionModel {
             .send()
             .await?;
 
+        println!("Pre Response: {:#?}", response);
+
         if response.status().is_success() {
-            match response.json::<ApiResponse<CompletionResponse>>().await? {
+            let value = response.json::<Value>().await?;
+            println!("Response: {:#?}", value);
+            let response: ApiResponse<CompletionResponse> = serde_json::from_value(value)?;
+            match response {
                 ApiResponse::Ok(response) => {
                     tracing::info!(target: "rig",
                         "OpenAI completion token usage: {:?}",
@@ -548,6 +556,42 @@ impl completion::CompletionModel for CompletionModel {
             }
         } else {
             Err(CompletionError::ProviderError(response.text().await?))
+        }
+    }
+}
+
+impl From<completion::Message> for Message {
+    fn from(message: completion::Message) -> Self {
+        match &message.kind {
+            completion::MessageKind::Chat(content) => Self {
+                role: message.role,
+                content: Some(content.clone()),
+                tool_calls: None,
+                tool_call_id: None,
+            },
+            completion::MessageKind::ToolCall {
+                id,
+                name,
+                arguments,
+            } => Self {
+                role: "assistant".into(),
+                content: None,
+                tool_calls: Some(vec![ToolCall {
+                    id: id.clone(),
+                    r#type: "function".into(),
+                    function: Function {
+                        name: name.clone(),
+                        arguments: arguments.to_string(),
+                    },
+                }]),
+                tool_call_id: None,
+            },
+            completion::MessageKind::ToolResponse { content, call_id } => Self {
+                role: "tool".into(),
+                content: Some(content.clone()),
+                tool_calls: None,
+                tool_call_id: Some(call_id.clone()),
+            },
         }
     }
 }
