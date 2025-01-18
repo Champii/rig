@@ -471,22 +471,22 @@ impl<M: CompletionModel> HistoryAgent<M> {
         >,
     > {
         Box::pin(async move {
-            if depth == 0 {
-                return Err(PromptError::Other("Max recursion depth reached".into()));
-            }
-
             // Add user's prompt to history
             let prompt = message.content();
 
             println!("History: {:#?}", self.history);
 
             // Create completion request with current history
-            let completion_response = self
-                .agent
-                .completion(&prompt, self.history.clone())
-                .await?
-                .send()
-                .await?;
+            let mut completion_builder =
+                self.agent.completion(&prompt, self.history.clone()).await?;
+
+            // If max depth reached, clear the tools to force a chat response
+            if depth == 0 {
+                println!("CLEARING TOOOOOOLLLLLSSSSS");
+                completion_builder = completion_builder.without_tools();
+            }
+
+            let completion_response = completion_builder.send().await?;
 
             match completion_response {
                 CompletionResponse {
@@ -516,13 +516,16 @@ impl<M: CompletionModel> HistoryAgent<M> {
                     // Execute tool call
                     let tool_result = self.agent.tools.call(&toolname, args.to_string()).await?;
 
+                    println!("Tool result: {:#?}", tool_result);
+
                     let tool_response = Message::tool_response(id, tool_result);
 
                     self.history.push(tool_response.clone());
 
-                    // Make the recursive call with incremented depth
-                    let (response, final_history) =
-                        self.send_message(tool_response.clone(), depth - 1).await?;
+                    // Make the recursive call with decremented depth
+                    let (response, final_history) = self
+                        .send_message(tool_response.clone(), depth.saturating_sub(1))
+                        .await?;
 
                     Ok((response, self.history.clone()))
                 }
@@ -537,7 +540,7 @@ impl<M: CompletionModel> ChatWithHistory for HistoryAgent<M> {
         prompt: &str,
     ) -> Result<(String, Vec<Message>), PromptError> {
         let message = Message::user(prompt.to_string());
-        let (response, new_history) = self.send_message(message, 3).await?;
+        let (response, new_history) = self.send_message(message, 2).await?;
         Ok((response, new_history.clone()))
     }
 }

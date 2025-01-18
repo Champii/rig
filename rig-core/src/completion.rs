@@ -514,6 +514,10 @@ impl<M: CompletionModel> CompletionRequestBuilder<M> {
             .fold(self, |builder, tool| builder.tool(tool))
     }
 
+    pub fn without_tools(self) -> Self {
+        self.tools(Vec::new())
+    }
+
     /// Adds additional parameters to the completion request.
     /// This can be used to set additional provider-specific parameters. For example,
     /// Cohere's completion models accept a `connectors` parameter that can be used to
