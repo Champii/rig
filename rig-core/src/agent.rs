@@ -106,9 +106,9 @@
 //! let response = agent.prompt("What does \"glarb-glarb\" mean?").await
 //!     .expect("Failed to prompt the agent");
 //! ```
-use std::collections::HashMap;
+use std::{collections::HashMap, pin::Pin};
 
-use futures::{stream, StreamExt, TryStreamExt};
+use futures::{stream, Future, StreamExt, TryStreamExt};
 use serde_json::json;
 
 use crate::{
@@ -458,6 +458,75 @@ impl<M: CompletionModel> HistoryAgent<M> {
                 .push(Message::system(self.agent.preamble.clone()));
         }
     }
+
+    fn send_message(
+        &mut self,
+        message: Message,
+    ) -> Pin<
+        Box<
+            dyn std::future::Future<Output = Result<(String, Vec<Message>), PromptError>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async move {
+            // Add user's prompt to history
+
+            let prompt = message.content();
+
+            println!("History: {:#?}", self.history);
+
+            // Create completion request with current history
+            let completion_response = self
+                .agent
+                .completion(&prompt, self.history.clone())
+                .await?
+                .send()
+                .await?;
+
+            match completion_response {
+                CompletionResponse {
+                    choice: ModelChoice::Message(msg),
+                    ..
+                } => {
+                    // Add assistant's message to history
+
+                    self.history.push(message);
+                    self.history.push(Message::assistant(msg.clone()));
+                    Ok((msg, self.history.clone()))
+                }
+                CompletionResponse {
+                    choice: ModelChoice::ToolCall(toolname, id, args),
+                    raw_response,
+                } => {
+                    // Add tool call to history
+
+                    if let Message::Chat { role, content } = &message {
+                        self.history.push(message);
+                    }
+
+                    self.history.push(Message::tool_call(
+                        id.clone(),
+                        toolname.clone(),
+                        args.clone(),
+                    ));
+
+                    // Execute tool call
+                    let tool_result = self.agent.tools.call(&toolname, args.to_string()).await?;
+
+                    let tool_response = Message::tool_response(id, tool_result);
+
+                    self.history.push(tool_response.clone());
+
+                    // Make the recursive call
+                    let (response, final_history) =
+                        self.send_message(tool_response.clone()).await?;
+
+                    Ok((response, self.history.clone()))
+                }
+            }
+        })
+    }
 }
 
 impl<M: CompletionModel> ChatWithHistory for HistoryAgent<M> {
@@ -465,51 +534,9 @@ impl<M: CompletionModel> ChatWithHistory for HistoryAgent<M> {
         &mut self,
         prompt: &str,
     ) -> Result<(String, Vec<Message>), PromptError> {
-        // Add user's prompt to history
-        let mut new_history = self.history.clone();
-        new_history.push(Message::user(prompt.to_string()));
-
-        println!("New history: {:#?}", new_history);
-
-        // Create completion request with current history
-        let completion_response = self
-            .agent
-            .completion(prompt, new_history.clone())
-            .await?
-            .send()
-            .await?;
-
-        match completion_response {
-            CompletionResponse {
-                choice: ModelChoice::Message(msg),
-                ..
-            } => {
-                // Add assistant's message to history
-                new_history.push(Message::assistant(msg.clone()));
-                self.history = new_history.clone();
-                Ok((msg, new_history))
-            }
-            CompletionResponse {
-                choice: ModelChoice::ToolCall(toolname, id, args),
-                raw_response,
-            } => {
-                // Add tool call to history
-                new_history.push(Message::tool_call(
-                    id.clone(),
-                    toolname.clone(),
-                    args.clone(),
-                ));
-
-                // Execute tool call
-                let tool_result = self.agent.tools.call(&toolname, args.to_string()).await?;
-
-                // Add tool result to history
-                new_history.push(Message::tool_response(id, tool_result.clone()));
-
-                self.history = new_history.clone();
-                Ok((tool_result, new_history))
-            }
-        }
+        let message = Message::user(prompt.to_string());
+        let (response, new_history) = self.send_message(message).await?;
+        Ok((response, new_history.clone()))
     }
 }
 
