@@ -107,49 +107,63 @@ pub enum PromptError {
 // ================================================================
 /// A message in the chat history
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Message {
-    /// The role of the message sender (system/user/assistant/tool)
-    pub role: String,
-    /// The specific kind of message
-    #[serde(flatten)]
-    pub kind: MessageKind,
-}
+#[serde(tag = "type", rename_all = "PascalCase")]
+pub enum Message {
+    /// A system message that sets behavior
+    /// An assistant message
+    Chat { role: String, content: String },
 
-/// The different kinds of messages that can be sent
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(tag = "type", content = "content")]
-pub enum MessageKind {
-    /// A regular chat message
-    Chat(String),
     /// A tool call from the assistant
     ToolCall {
+        role: String,
         id: String,
         name: String,
         arguments: serde_json::Value,
     },
+
     /// A tool response
-    ToolResponse { call_id: String, content: String },
+    ToolResponse {
+        role: String,
+        tool_call_id: String,
+        content: String,
+    },
+}
+
+fn system_role() -> String {
+    "system".to_string()
+}
+
+fn user_role() -> String {
+    "user".to_string()
+}
+
+fn assistant_role() -> String {
+    "assistant".to_string()
+}
+
+fn tool_role() -> String {
+    "tool".to_string()
 }
 
 impl Message {
     pub fn system(content: impl Into<String>) -> Self {
-        Message {
-            role: "system".into(),
-            kind: MessageKind::Chat(content.into()),
+        Message::Chat {
+            role: system_role(),
+            content: content.into(),
         }
     }
 
     pub fn user(content: impl Into<String>) -> Self {
-        Message {
-            role: "user".into(),
-            kind: MessageKind::Chat(content.into()),
+        Message::Chat {
+            role: user_role(),
+            content: content.into(),
         }
     }
 
     pub fn assistant(content: impl Into<String>) -> Self {
-        Message {
-            role: "assistant".into(),
-            kind: MessageKind::Chat(content.into()),
+        Message::Chat {
+            role: assistant_role(),
+            content: content.into(),
         }
     }
 
@@ -158,35 +172,32 @@ impl Message {
         name: impl Into<String>,
         arguments: serde_json::Value,
     ) -> Self {
-        Message {
-            role: "assistant".into(),
-            kind: MessageKind::ToolCall {
-                id: id.into(),
-                name: name.into(),
-                arguments,
-            },
+        Message::ToolCall {
+            role: assistant_role(),
+            id: id.into(),
+            name: name.into(),
+            arguments,
         }
     }
 
     pub fn tool_response(call_id: impl Into<String>, content: impl Into<String>) -> Self {
-        Message {
-            role: "tool".into(),
-            kind: MessageKind::ToolResponse {
-                call_id: call_id.into(),
-                content: content.into(),
-            },
+        Message::ToolResponse {
+            role: tool_role(),
+            tool_call_id: call_id.into(),
+            content: content.into(),
         }
     }
 
     /// Get the content of the message. For tool calls, this returns a JSON string
     /// in the format expected by the OpenAI API.
     pub fn content(&self) -> String {
-        match &self.kind {
-            MessageKind::Chat(content) => content.clone(),
-            MessageKind::ToolCall {
+        match self {
+            Message::Chat { content, .. } => content.clone(),
+            Message::ToolCall {
                 id,
                 name,
                 arguments,
+                ..
             } => serde_json::json!({
                 "tool_calls": [{
                     "id": id,
@@ -198,7 +209,7 @@ impl Message {
                 }]
             })
             .to_string(),
-            MessageKind::ToolResponse { content, .. } => content.clone(),
+            Message::ToolResponse { content, .. } => content.clone(),
         }
     }
 }

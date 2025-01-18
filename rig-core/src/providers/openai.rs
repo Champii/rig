@@ -381,7 +381,6 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
             [Choice {
                 message:
                     Message {
-                        content: None,
                         tool_calls: Some(tool_calls),
                         ..
                     },
@@ -425,7 +424,7 @@ pub struct Choice {
     pub finish_reason: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Message {
     pub role: String,
     pub content: Option<String>,
@@ -433,7 +432,7 @@ pub struct Message {
     pub tool_call_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ToolCall {
     pub id: String,
     pub r#type: String,
@@ -455,7 +454,7 @@ impl From<completion::ToolDefinition> for ToolDefinition {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Function {
     pub name: String,
     pub arguments: String,
@@ -487,10 +486,7 @@ impl completion::CompletionModel for CompletionModel {
     ) -> Result<completion::CompletionResponse<CompletionResponse>, CompletionError> {
         // Add preamble to chat history (if available)
         let mut full_history = if let Some(preamble) = &completion_request.preamble {
-            vec![completion::Message {
-                role: "system".into(),
-                kind: completion::MessageKind::Chat(preamble.clone()),
-            }]
+            vec![completion::Message::system(preamble.clone())]
         } else {
             vec![]
         };
@@ -502,10 +498,12 @@ impl completion::CompletionModel for CompletionModel {
         let prompt_with_context = completion_request.prompt_with_context();
 
         // Add context documents to chat history
-        full_history.push(completion::Message {
-            role: "user".into(),
-            kind: completion::MessageKind::Chat(prompt_with_context),
-        });
+        full_history.push(completion::Message::user(prompt_with_context));
+
+        let full_history = full_history
+            .into_iter()
+            .map(Message::from)
+            .collect::<Vec<_>>();
 
         let request = if completion_request.tools.is_empty() {
             json!({
@@ -523,8 +521,6 @@ impl completion::CompletionModel for CompletionModel {
             })
         };
 
-        println!("Request: {:#?}", request);
-
         let response = self
             .client
             .post("/chat/completions")
@@ -538,11 +534,8 @@ impl completion::CompletionModel for CompletionModel {
             .send()
             .await?;
 
-        println!("Pre Response: {:#?}", response);
-
         if response.status().is_success() {
             let value = response.json::<Value>().await?;
-            println!("Response: {:#?}", value);
             let response: ApiResponse<CompletionResponse> = serde_json::from_value(value)?;
             match response {
                 ApiResponse::Ok(response) => {
@@ -562,14 +555,15 @@ impl completion::CompletionModel for CompletionModel {
 
 impl From<completion::Message> for Message {
     fn from(message: completion::Message) -> Self {
-        match &message.kind {
-            completion::MessageKind::Chat(content) => Self {
-                role: message.role,
+        match message {
+            completion::Message::Chat { role, content } => Self {
+                role: role.clone(),
                 content: Some(content.clone()),
                 tool_calls: None,
                 tool_call_id: None,
             },
-            completion::MessageKind::ToolCall {
+            completion::Message::ToolCall {
+                role,
                 id,
                 name,
                 arguments,
@@ -586,7 +580,11 @@ impl From<completion::Message> for Message {
                 }]),
                 tool_call_id: None,
             },
-            completion::MessageKind::ToolResponse { content, call_id } => Self {
+            completion::Message::ToolResponse {
+                role,
+                content,
+                tool_call_id: call_id,
+            } => Self {
                 role: "tool".into(),
                 content: Some(content.clone()),
                 tool_calls: None,

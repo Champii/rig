@@ -114,8 +114,8 @@ use serde_json::json;
 use crate::{
     completion::{
         Chat, ChatWithHistory, Completion, CompletionError, CompletionModel,
-        CompletionRequestBuilder, CompletionResponse, Document, Message, MessageKind, ModelChoice,
-        Prompt, PromptError,
+        CompletionRequestBuilder, CompletionResponse, Document, Message, ModelChoice, Prompt,
+        PromptError,
     },
     tool::{Tool, ToolSet},
     vector_store::{VectorStoreError, VectorStoreIndexDyn},
@@ -438,10 +438,7 @@ impl<M: CompletionModel> HistoryAgent<M> {
     pub fn new(agent: Agent<M>) -> Self {
         let mut history = Vec::new();
         if !agent.preamble.is_empty() {
-            history.push(Message {
-                role: "system".into(),
-                kind: MessageKind::Chat(agent.preamble.clone()),
-            });
+            history.push(Message::system(agent.preamble.clone()));
         }
         Self { agent, history }
     }
@@ -457,10 +454,8 @@ impl<M: CompletionModel> HistoryAgent<M> {
     pub fn clear_history(&mut self) {
         self.history.clear();
         if !self.agent.preamble.is_empty() {
-            self.history.push(Message {
-                role: "system".into(),
-                kind: MessageKind::Chat(self.agent.preamble.clone()),
-            });
+            self.history
+                .push(Message::system(self.agent.preamble.clone()));
         }
     }
 }
@@ -472,10 +467,7 @@ impl<M: CompletionModel> ChatWithHistory for HistoryAgent<M> {
     ) -> Result<(String, Vec<Message>), PromptError> {
         // Add user's prompt to history
         let mut new_history = self.history.clone();
-        new_history.push(Message {
-            role: "user".into(),
-            kind: MessageKind::Chat(prompt.to_string()),
-        });
+        new_history.push(Message::user(prompt.to_string()));
 
         println!("New history: {:#?}", new_history);
 
@@ -493,10 +485,7 @@ impl<M: CompletionModel> ChatWithHistory for HistoryAgent<M> {
                 ..
             } => {
                 // Add assistant's message to history
-                new_history.push(Message {
-                    role: "assistant".into(),
-                    kind: MessageKind::Chat(msg.clone()),
-                });
+                new_history.push(Message::assistant(msg.clone()));
                 self.history = new_history.clone();
                 Ok((msg, new_history))
             }
