@@ -185,6 +185,16 @@ pub trait Chat: Send + Sync {
     ) -> impl std::future::Future<Output = Result<String, PromptError>> + Send;
 }
 
+/// Trait defining a high-level LLM chat interface with internal history management.
+pub trait ChatWithHistory: Send + Sync {
+    /// Send a prompt to the model, using internally managed chat history.
+    /// Returns both the response and the complete chat history.
+    fn chat_with_history(
+        &mut self,
+        prompt: &str,
+    ) -> impl std::future::Future<Output = Result<(String, Vec<Message>), PromptError>> + Send;
+}
+
 /// Trait defininig a low-level LLM completion interface
 pub trait Completion<M: CompletionModel> {
     /// Generates a completion request builder for the given `prompt` and `chat_history`.

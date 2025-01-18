@@ -109,11 +109,13 @@
 use std::collections::HashMap;
 
 use futures::{stream, StreamExt, TryStreamExt};
+use serde_json::json;
 
 use crate::{
     completion::{
-        Chat, Completion, CompletionError, CompletionModel, CompletionRequestBuilder,
-        CompletionResponse, Document, Message, ModelChoice, Prompt, PromptError,
+        Chat, ChatWithHistory, Completion, CompletionError, CompletionModel,
+        CompletionRequestBuilder, CompletionResponse, Document, Message, ModelChoice, Prompt,
+        PromptError,
     },
     tool::{Tool, ToolSet},
     vector_store::{VectorStoreError, VectorStoreIndexDyn},
@@ -423,5 +425,175 @@ impl<M: CompletionModel> AgentBuilder<M> {
             dynamic_tools: self.dynamic_tools,
             tools: self.tools,
         }
+    }
+}
+
+/// An entry in the chat history, which can be either a regular message or a tool interaction
+#[derive(Clone, Debug)]
+pub enum HistoryEntry {
+    /// A regular chat message (system/user/assistant)
+    Message(Message),
+    /// A tool call from the assistant
+    ToolCall {
+        id: String,
+        name: String,
+        args: serde_json::Value,
+    },
+    /// A tool response
+    ToolResponse { call_id: String, content: String },
+}
+
+impl HistoryEntry {
+    /// Convert the history entry to a Message for use in completion requests
+    fn to_message(&self) -> Message {
+        match self {
+            HistoryEntry::Message(msg) => msg.clone(),
+            HistoryEntry::ToolCall { name, args, id } => Message {
+                role: "assistant".into(),
+                // [{
+                //     "id": "call_12345xyz",
+                //     "type": "function",
+                //     "function": {
+                //       "name": "get_weather",
+                //       "arguments": "{\"latitude\":48.8566,\"longitude\":2.3522}"
+                //     }
+                // }]
+                content: json!({
+                    "tool_calls": [
+                        {
+                            "id": id,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": args,
+                            }
+                        }
+                    ]
+                })
+                .to_string(),
+            },
+            HistoryEntry::ToolResponse { content, .. } => Message {
+                role: "tool".into(),
+                content: content.clone(),
+            },
+        }
+    }
+}
+
+/// A wrapper around an Agent that maintains its own chat history
+pub struct HistoryAgent<M: CompletionModel> {
+    agent: Agent<M>,
+    history: Vec<HistoryEntry>,
+}
+
+impl<M: CompletionModel> HistoryAgent<M> {
+    pub fn new(agent: Agent<M>) -> Self {
+        let mut history = Vec::new();
+        if !agent.preamble.is_empty() {
+            history.push(HistoryEntry::Message(Message {
+                role: "system".into(),
+                content: agent.preamble.clone(),
+            }));
+        }
+        Self { agent, history }
+    }
+
+    pub fn set_history(&mut self, history: Vec<HistoryEntry>) {
+        self.history = history;
+    }
+
+    pub fn history(&self) -> Vec<HistoryEntry> {
+        self.history.clone()
+    }
+
+    pub fn clear_history(&mut self) {
+        self.history.clear();
+        if !self.agent.preamble.is_empty() {
+            self.history.push(HistoryEntry::Message(Message {
+                role: "system".into(),
+                content: self.agent.preamble.clone(),
+            }));
+        }
+    }
+
+    /// Convert the history entries to Messages for use in completion requests
+    fn history_as_messages(&self) -> Vec<Message> {
+        self.history
+            .iter()
+            .map(|entry| entry.to_message())
+            .collect()
+    }
+}
+
+impl<M: CompletionModel> ChatWithHistory for HistoryAgent<M> {
+    async fn chat_with_history(
+        &mut self,
+        prompt: &str,
+    ) -> Result<(String, Vec<Message>), PromptError> {
+        let history = self.history_as_messages();
+        println!("History: {:#?}", history);
+        // Create completion request with current history
+        let completion_response = self.agent.completion(prompt, history).await?.send().await?;
+
+        // Update history with user's prompt
+        self.history.push(HistoryEntry::Message(Message {
+            role: "user".into(),
+            content: prompt.to_string(),
+        }));
+
+        match completion_response {
+            CompletionResponse {
+                choice: ModelChoice::Message(msg),
+                ..
+            } => {
+                // Add assistant's message to history
+                self.history.push(HistoryEntry::Message(Message {
+                    role: "assistant".into(),
+                    content: msg.clone(),
+                }));
+                Ok((
+                    msg,
+                    self.history
+                        .iter()
+                        .map(|entry| entry.to_message())
+                        .collect(),
+                ))
+            }
+            CompletionResponse {
+                choice: ModelChoice::ToolCall(toolname, id, args),
+                raw_response,
+            } => {
+                // Add tool call to history
+                self.history.push(HistoryEntry::ToolCall {
+                    id: id.clone(),
+                    name: toolname.clone(),
+                    args: args.clone(),
+                });
+
+                // Execute tool call
+                let tool_result = self.agent.tools.call(&toolname, args.to_string()).await?;
+
+                // Add tool result to history
+                self.history.push(HistoryEntry::ToolResponse {
+                    call_id: id,
+                    content: tool_result.clone(),
+                });
+
+                Ok((
+                    tool_result,
+                    self.history
+                        .iter()
+                        .map(|entry| entry.to_message())
+                        .collect(),
+                ))
+            }
+        }
+    }
+}
+
+// Add a method to Agent to create a HistoryAgent
+impl<M: CompletionModel> Agent<M> {
+    pub fn with_history(self) -> HistoryAgent<M> {
+        HistoryAgent::new(self)
     }
 }
