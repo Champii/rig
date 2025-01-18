@@ -142,18 +142,22 @@ pub struct Message {
 
 impl From<completion::Message> for Message {
     fn from(message: completion::Message) -> Self {
-        let content = match &message.kind {
-            completion::MessageKind::Chat(content) => content.clone(),
-            completion::MessageKind::ToolCall {
+        let content = match &message {
+            completion::Message::Chat { content, .. } => content.clone(),
+            completion::Message::ToolCall {
                 name, arguments, ..
             } => {
                 format!("Calling tool {} with arguments {}", name, arguments)
             }
-            completion::MessageKind::ToolResponse { content, .. } => content.clone(),
+            completion::Message::ToolResponse { content, .. } => content.clone(),
         };
 
         Self {
-            role: message.role,
+            role: match message {
+                completion::Message::Chat { role, .. } => role.clone(),
+                completion::Message::ToolCall { .. } => "USER".to_owned(),
+                completion::Message::ToolResponse { .. } => "USER".to_owned(),
+            },
             content,
         }
     }

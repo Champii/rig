@@ -482,7 +482,6 @@ impl<M: CompletionModel> HistoryAgent<M> {
 
             // If max depth reached, clear the tools to force a chat response
             if depth == 0 {
-                println!("CLEARING TOOOOOOLLLLLSSSSS");
                 completion_builder = completion_builder.without_tools();
             }
 
@@ -504,7 +503,12 @@ impl<M: CompletionModel> HistoryAgent<M> {
                 } => {
                     // Add tool call to history
                     if let Message::Chat { role, content } = &message {
-                        self.history.push(message);
+                        self.history.push(message.clone());
+                    }
+
+                    if depth == 0 {
+                        // quit here, we don't want to call tools
+                        return Ok((message.content(), self.history.clone()));
                     }
 
                     self.history.push(Message::tool_call(
@@ -540,7 +544,7 @@ impl<M: CompletionModel> ChatWithHistory for HistoryAgent<M> {
         prompt: &str,
     ) -> Result<(String, Vec<Message>), PromptError> {
         let message = Message::user(prompt.to_string());
-        let (response, new_history) = self.send_message(message, 2).await?;
+        let (response, new_history) = self.send_message(message, 1).await?;
         Ok((response, new_history.clone()))
     }
 }

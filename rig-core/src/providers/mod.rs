@@ -42,10 +42,10 @@
 //! ```
 //! Note: The example above uses the OpenAI provider client, but the same pattern can
 //! be used with the Cohere provider client.
-// pub mod anthropic;
-// pub mod cohere;
-// pub mod eternalai;
-// pub mod gemini;
+pub mod anthropic;
+pub mod cohere;
+pub mod eternalai;
+pub mod gemini;
 pub mod openai;
-// pub mod perplexity;
-// pub mod xai;
+pub mod perplexity;
+pub mod xai;

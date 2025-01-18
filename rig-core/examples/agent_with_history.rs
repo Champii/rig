@@ -1,6 +1,6 @@
 use anyhow::Result;
 use rig::{
-    completion::{ChatWithHistory, Message, MessageKind, ToolDefinition},
+    completion::{ChatWithHistory, Message, ToolDefinition},
     providers,
     tool::Tool,
 };
@@ -71,7 +71,7 @@ async fn main() -> Result<(), anyhow::Error> {
     println!("First response: {}", response1);
     println!("\nHistory after first interaction:");
     for msg in history1 {
-        println!("{}: {}", msg.role, msg.content);
+        println!("{}: {}", msg.role(), msg.content());
     }
 
     // Second interaction (asking about previous calculation)
@@ -81,14 +81,14 @@ async fn main() -> Result<(), anyhow::Error> {
     println!("\nSecond response: {}", response2);
     println!("\nFull history:");
     for msg in history2 {
-        let content = match &msg.kind {
-            MessageKind::Chat(content) => content,
-            MessageKind::ToolCall {
+        let content = match &msg {
+            Message::Chat { content, .. } => content,
+            Message::ToolCall {
                 name, arguments, ..
             } => &format!("Calling tool {} with arguments {}", name, arguments),
-            MessageKind::ToolResponse { content, .. } => content,
+            Message::ToolResponse { content, .. } => content,
         };
-        println!("{}: {}", msg.role, content);
+        println!("{}: {}", msg.role(), content);
     }
 
     Ok(())

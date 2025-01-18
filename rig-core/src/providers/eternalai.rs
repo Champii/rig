@@ -463,10 +463,7 @@ impl completion::CompletionModel for CompletionModel {
     ) -> Result<completion::CompletionResponse<CompletionResponse>, CompletionError> {
         // Add preamble to chat history (if available)
         let mut full_history = if let Some(preamble) = &completion_request.preamble {
-            vec![completion::Message {
-                role: "system".into(),
-                content: preamble.clone(),
-            }]
+            vec![completion::Message::system(preamble.clone())]
         } else {
             vec![]
         };
@@ -478,10 +475,7 @@ impl completion::CompletionModel for CompletionModel {
         let prompt_with_context = completion_request.prompt_with_context();
 
         // Add context documents to chat history
-        full_history.push(completion::Message {
-            role: "user".into(),
-            content: prompt_with_context,
-        });
+        full_history.push(completion::Message::user(prompt_with_context));
 
         let mut chain_id = self.chain_id.clone();
         if chain_id.is_empty() {

@@ -53,6 +53,7 @@ impl completion::CompletionModel for CompletionModel {
         // Handle Gemini specific parameters
         let additional_params = completion_request
             .additional_params
+            .clone()
             .unwrap_or_else(|| Value::Object(Map::new()));
         let mut generation_config = serde_json::from_value::<GenerationConfig>(additional_params)?;
 
@@ -67,44 +68,41 @@ impl completion::CompletionModel for CompletionModel {
         }
 
         let mut full_history = if let Some(preamble) = &completion_request.preamble {
-            vec![completion::Message {
-                role: "system".into(),
-                kind: completion::MessageKind::Chat(preamble.clone()),
-            }]
+            vec![completion::Message::system(preamble.clone())]
         } else {
             vec![]
         };
 
         full_history.extend(completion_request.chat_history.clone());
         let prompt_with_context = completion_request.prompt_with_context();
-        full_history.push(completion::Message {
-            role: "user".into(),
-            kind: completion::MessageKind::Chat(prompt_with_context),
-        });
+        full_history.push(completion::Message::user(prompt_with_context));
 
         let request = GenerateContentRequest {
             contents: full_history
                 .into_iter()
                 .map(|msg| {
-                    let content = match &msg.kind {
-                        completion::MessageKind::Chat(content) => content.clone(),
-                        completion::MessageKind::ToolCall {
+                    let content = match &msg {
+                        completion::Message::Chat { content, .. } => content.clone(),
+                        completion::Message::ToolCall {
                             name, arguments, ..
                         } => {
                             format!("Calling tool {} with arguments {}", name, arguments)
                         }
-                        completion::MessageKind::ToolResponse { content, .. } => content.clone(),
+                        completion::Message::ToolResponse { content, .. } => content.clone(),
                     };
                     Content {
                         parts: vec![Part {
                             text: Some(content),
                             ..Default::default()
                         }],
-                        role: match msg.role.as_str() {
-                            "system" => Some(Role::Model),
-                            "user" => Some(Role::User),
-                            "assistant" => Some(Role::Model),
-                            _ => None,
+                        role: match msg {
+                            completion::Message::Chat { role, .. } => match role.as_str() {
+                                "model" => Some(Role::Model),
+                                "user" => Some(Role::User),
+                                _ => None,
+                            },
+                            completion::Message::ToolCall { .. } => Some(Role::User),
+                            completion::Message::ToolResponse { .. } => Some(Role::User),
                         },
                     }
                 })
@@ -209,20 +207,25 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
 
 impl From<completion::Message> for gemini_api_types::Content {
     fn from(message: completion::Message) -> Self {
-        let content = match &message.kind {
-            completion::MessageKind::Chat(content) => content.clone(),
-            completion::MessageKind::ToolCall {
+        let content = match &message {
+            completion::Message::Chat { content, .. } => content.clone(),
+            completion::Message::ToolCall {
                 name, arguments, ..
             } => {
                 format!("Calling tool {} with arguments {}", name, arguments)
             }
-            completion::MessageKind::ToolResponse { content, .. } => content.clone(),
+            completion::Message::ToolResponse { content, .. } => content.clone(),
         };
 
         Self {
-            role: Some(match message.role.as_str() {
-                "user" => gemini_api_types::Role::User,
-                _ => gemini_api_types::Role::Model,
+            role: Some(match message {
+                completion::Message::Chat { role, .. } => match role.as_str() {
+                    "model" => gemini_api_types::Role::Model,
+                    "user" => gemini_api_types::Role::User,
+                    _ => gemini_api_types::Role::Model,
+                },
+                completion::Message::ToolCall { .. } => gemini_api_types::Role::User,
+                completion::Message::ToolResponse { .. } => gemini_api_types::Role::User,
             }),
             parts: vec![gemini_api_types::Part {
                 text: Some(content),

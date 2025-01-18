@@ -191,6 +191,14 @@ impl Message {
         }
     }
 
+    pub fn role(&self) -> String {
+        match self {
+            Message::Chat { role, .. } => role.clone(),
+            Message::ToolCall { .. } => tool_role(),
+            Message::ToolResponse { .. } => tool_role(),
+        }
+    }
+
     /// Get the content of the message. For tool calls, this returns a JSON string
     /// in the format expected by the OpenAI API.
     pub fn content(&self) -> String {
