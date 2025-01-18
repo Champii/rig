@@ -100,6 +100,9 @@ pub enum PromptError {
 
     #[error("ToolCallError: {0}")]
     ToolError(#[from] ToolSetError),
+
+    #[error("Other: {0}")]
+    Other(String),
 }
 
 // ================================================================

@@ -462,6 +462,7 @@ impl<M: CompletionModel> HistoryAgent<M> {
     fn send_message(
         &mut self,
         message: Message,
+        depth: u32,
     ) -> Pin<
         Box<
             dyn std::future::Future<Output = Result<(String, Vec<Message>), PromptError>>
@@ -470,8 +471,11 @@ impl<M: CompletionModel> HistoryAgent<M> {
         >,
     > {
         Box::pin(async move {
-            // Add user's prompt to history
+            if depth == 0 {
+                return Err(PromptError::Other("Max recursion depth reached".into()));
+            }
 
+            // Add user's prompt to history
             let prompt = message.content();
 
             println!("History: {:#?}", self.history);
@@ -490,7 +494,6 @@ impl<M: CompletionModel> HistoryAgent<M> {
                     ..
                 } => {
                     // Add assistant's message to history
-
                     self.history.push(message);
                     self.history.push(Message::assistant(msg.clone()));
                     Ok((msg, self.history.clone()))
@@ -500,7 +503,6 @@ impl<M: CompletionModel> HistoryAgent<M> {
                     raw_response,
                 } => {
                     // Add tool call to history
-
                     if let Message::Chat { role, content } = &message {
                         self.history.push(message);
                     }
@@ -518,9 +520,9 @@ impl<M: CompletionModel> HistoryAgent<M> {
 
                     self.history.push(tool_response.clone());
 
-                    // Make the recursive call
+                    // Make the recursive call with incremented depth
                     let (response, final_history) =
-                        self.send_message(tool_response.clone()).await?;
+                        self.send_message(tool_response.clone(), depth - 1).await?;
 
                     Ok((response, self.history.clone()))
                 }
@@ -535,7 +537,7 @@ impl<M: CompletionModel> ChatWithHistory for HistoryAgent<M> {
         prompt: &str,
     ) -> Result<(String, Vec<Message>), PromptError> {
         let message = Message::user(prompt.to_string());
-        let (response, new_history) = self.send_message(message).await?;
+        let (response, new_history) = self.send_message(message, 3).await?;
         Ok((response, new_history.clone()))
     }
 }
