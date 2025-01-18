@@ -62,7 +62,7 @@
 //!
 //! For more information on how to use the completion functionality, refer to the documentation of
 //! the individual traits, structs, and enums defined in this module.
-use std::{collections::HashMap, pin::Pin};
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -301,11 +301,11 @@ pub trait Chat: Send + Sync {
 /// Trait defining a high-level LLM chat interface with internal history management.
 pub trait ChatWithHistory: Send + Sync {
     /// Send a prompt to the model, using internally managed chat history.
-    /// Returns both the response and the complete chat history.
-    async fn chat_with_history(
+    /// Returns the response.
+    fn chat_with_history(
         &mut self,
         prompt: &str,
-    ) -> Result<(String, Vec<Message>), PromptError>;
+    ) -> impl std::future::Future<Output = Result<String, PromptError>> + Send;
 }
 
 /// Trait defininig a low-level LLM completion interface

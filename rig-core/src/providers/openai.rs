@@ -482,7 +482,7 @@ impl completion::CompletionModel for CompletionModel {
     #[cfg_attr(feature = "worker", worker::send)]
     async fn completion(
         &self,
-        mut completion_request: CompletionRequest,
+        completion_request: CompletionRequest,
     ) -> Result<completion::CompletionResponse<CompletionResponse>, CompletionError> {
         // Add preamble to chat history (if available)
         let mut full_history = if let Some(preamble) = &completion_request.preamble {
@@ -563,7 +563,7 @@ impl From<completion::Message> for Message {
                 tool_call_id: None,
             },
             completion::Message::ToolCall {
-                role,
+                role: _,
                 id,
                 name,
                 arguments,
@@ -581,7 +581,7 @@ impl From<completion::Message> for Message {
                 tool_call_id: None,
             },
             completion::Message::ToolResponse {
-                role,
+                role: _,
                 content,
                 tool_call_id: call_id,
             } => Self {

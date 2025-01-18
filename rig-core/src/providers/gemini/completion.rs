@@ -19,7 +19,7 @@ use gemini_api_types::{
 use serde_json::{Map, Value};
 use std::convert::TryFrom;
 
-use crate::completion::{self, CompletionError, CompletionRequest};
+use crate::completion::{self, CompletionError};
 
 use super::Client;
 
@@ -48,7 +48,7 @@ impl completion::CompletionModel for CompletionModel {
     #[cfg_attr(feature = "worker", worker::send)]
     async fn completion(
         &self,
-        mut completion_request: completion::CompletionRequest,
+        completion_request: completion::CompletionRequest,
     ) -> Result<completion::CompletionResponse<GenerateContentResponse>, CompletionError> {
         // Handle Gemini specific parameters
         let additional_params = completion_request

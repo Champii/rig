@@ -67,20 +67,20 @@ async fn main() -> Result<(), anyhow::Error> {
         .with_history();
 
     // First interaction
-    let (response1, history1) = agent.chat_with_history("Calculate 2 + 5").await?;
+    let response1 = agent.chat_with_history("Calculate 2 + 5").await?;
     println!("First response: {}", response1);
     println!("\nHistory after first interaction:");
-    for msg in history1 {
+    for msg in agent.history() {
         println!("{}: {}", msg.role(), msg.content());
     }
 
     // Second interaction (asking about previous calculation)
-    let (response2, history2) = agent
+    let response2 = agent
         .chat_with_history("What was the previous calculation?")
         .await?;
     println!("\nSecond response: {}", response2);
     println!("\nFull history:");
-    for msg in history2 {
+    for msg in agent.history() {
         let content = match &msg {
             Message::Chat { content, .. } => content,
             Message::ToolCall {

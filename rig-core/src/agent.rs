@@ -108,8 +108,7 @@
 //! ```
 use std::{collections::HashMap, pin::Pin};
 
-use futures::{stream, Future, StreamExt, TryStreamExt};
-use serde_json::json;
+use futures::{stream, StreamExt, TryStreamExt};
 
 use crate::{
     completion::{
@@ -463,13 +462,7 @@ impl<M: CompletionModel> HistoryAgent<M> {
         &mut self,
         message: Message,
         depth: u32,
-    ) -> Pin<
-        Box<
-            dyn std::future::Future<Output = Result<(String, Vec<Message>), PromptError>>
-                + Send
-                + '_,
-        >,
-    > {
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<String, PromptError>> + Send + '_>> {
         Box::pin(async move {
             // Add user's prompt to history
             let prompt = message.content();
@@ -495,20 +488,20 @@ impl<M: CompletionModel> HistoryAgent<M> {
                     // Add assistant's message to history
                     self.history.push(message);
                     self.history.push(Message::assistant(msg.clone()));
-                    Ok((msg, self.history.clone()))
+                    Ok(msg)
                 }
                 CompletionResponse {
                     choice: ModelChoice::ToolCall(toolname, id, args),
-                    raw_response,
+                    ..
                 } => {
                     // Add tool call to history
-                    if let Message::Chat { role, content } = &message {
+                    if let Message::Chat { .. } = &message {
                         self.history.push(message.clone());
                     }
 
                     if depth == 0 {
                         // quit here, we don't want to call tools
-                        return Ok((message.content(), self.history.clone()));
+                        return Ok(message.content().clone());
                     }
 
                     self.history.push(Message::tool_call(
@@ -527,11 +520,11 @@ impl<M: CompletionModel> HistoryAgent<M> {
                     self.history.push(tool_response.clone());
 
                     // Make the recursive call with decremented depth
-                    let (response, final_history) = self
+                    let response = self
                         .send_message(tool_response.clone(), depth.saturating_sub(1))
                         .await?;
 
-                    Ok((response, self.history.clone()))
+                    Ok(response)
                 }
             }
         })
@@ -539,13 +532,10 @@ impl<M: CompletionModel> HistoryAgent<M> {
 }
 
 impl<M: CompletionModel> ChatWithHistory for HistoryAgent<M> {
-    async fn chat_with_history(
-        &mut self,
-        prompt: &str,
-    ) -> Result<(String, Vec<Message>), PromptError> {
+    async fn chat_with_history(&mut self, prompt: &str) -> Result<String, PromptError> {
         let message = Message::user(prompt.to_string());
-        let (response, new_history) = self.send_message(message, 1).await?;
-        Ok((response, new_history.clone()))
+        let response = self.send_message(message, 1).await?;
+        Ok(response)
     }
 }
 
