@@ -346,6 +346,60 @@ pub enum ModelChoice {
     /// Represents a completion response as a tool call of the form
     /// `ToolCall(function_name, id, function_params)`.
     ToolCall(String, String, serde_json::Value),
+    /// Represents a completion response that contains both content and tool calls
+    Combined {
+        content: Option<String>,
+        tool_calls: Vec<(String, String, serde_json::Value)>,
+    },
+}
+
+impl ModelChoice {
+    /// Creates a new combined response
+    pub fn combined(
+        content: Option<String>,
+        tool_calls: Vec<(String, String, serde_json::Value)>,
+    ) -> Self {
+        Self::Combined {
+            content,
+            tool_calls,
+        }
+    }
+
+    /// Returns true if this choice contains any tool calls
+    pub fn has_tool_calls(&self) -> bool {
+        match self {
+            Self::Message(_) => false,
+            Self::ToolCall(_, _, _) => true,
+            Self::Combined { tool_calls, .. } => !tool_calls.is_empty(),
+        }
+    }
+
+    /// Returns true if this choice contains content
+    pub fn has_content(&self) -> bool {
+        match self {
+            Self::Message(_) => true,
+            Self::ToolCall(_, _, _) => false,
+            Self::Combined { content, .. } => content.is_some(),
+        }
+    }
+
+    /// Gets the content if any exists
+    pub fn content(&self) -> Option<String> {
+        match self {
+            Self::Message(content) => Some(content.clone()),
+            Self::ToolCall(_, _, _) => None,
+            Self::Combined { content, .. } => content.clone(),
+        }
+    }
+
+    /// Gets any tool calls
+    pub fn tool_calls(&self) -> Vec<(String, String, serde_json::Value)> {
+        match self {
+            Self::Message(_) => vec![],
+            Self::ToolCall(name, id, args) => vec![(name.clone(), id.clone(), args.clone())],
+            Self::Combined { tool_calls, .. } => tool_calls.clone(),
+        }
+    }
 }
 
 /// Trait defining a completion model that can be used to generate completion responses.

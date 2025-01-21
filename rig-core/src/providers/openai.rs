@@ -382,21 +382,46 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                 message:
                     Message {
                         tool_calls: Some(tool_calls),
+                        content,
                         ..
                     },
                 ..
             }, ..] => {
-                let call = tool_calls.first().ok_or_else(|| {
-                    CompletionError::ResponseError("Empty tool_calls array".into())
-                })?;
-                Ok(completion::CompletionResponse {
-                    choice: completion::ModelChoice::ToolCall(
-                        call.function.name.clone(),
-                        call.id.clone(),
-                        serde_json::from_str(&call.function.arguments)?,
-                    ),
-                    raw_response: value,
-                })
+                println!(
+                    "GOT TOOL CALLS: {:?} AND CONTENT: {:?}",
+                    tool_calls, content
+                );
+                // Convert tool calls into our format
+                let tool_calls = tool_calls
+                    .iter()
+                    .map(|call| {
+                        Ok((
+                            call.function.name.clone(),
+                            call.id.clone(),
+                            serde_json::from_str(&call.function.arguments)?,
+                        ))
+                    })
+                    .collect::<Result<Vec<_>, CompletionError>>()?;
+
+                // If we have both content and tool calls, use Combined variant
+                if content.is_some() && content.as_ref().map(|c| !c.is_empty()).unwrap_or(false) {
+                    Ok(completion::CompletionResponse {
+                        choice: completion::ModelChoice::Combined {
+                            content: content.clone(),
+                            tool_calls,
+                        },
+                        raw_response: value,
+                    })
+                } else {
+                    // If we only have tool calls, use the first one as before
+                    let (name, id, args) = tool_calls.into_iter().next().ok_or_else(|| {
+                        CompletionError::ResponseError("Empty tool_calls array".into())
+                    })?;
+                    Ok(completion::CompletionResponse {
+                        choice: completion::ModelChoice::ToolCall(name, id, args),
+                        raw_response: value,
+                    })
+                }
             }
             [Choice {
                 message:
@@ -405,10 +430,13 @@ impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionRe
                         ..
                     },
                 ..
-            }, ..] => Ok(completion::CompletionResponse {
-                choice: completion::ModelChoice::Message(content.to_string()),
-                raw_response: value,
-            }),
+            }, ..] => {
+                println!("GOT CONTENT: {:?}", content);
+                Ok(completion::CompletionResponse {
+                    choice: completion::ModelChoice::Message(content.to_string()),
+                    raw_response: value,
+                })
+            }
             _ => Err(CompletionError::ResponseError(
                 "Response did not contain a message or tool call".into(),
             )),

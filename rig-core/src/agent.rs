@@ -269,6 +269,30 @@ impl<M: CompletionModel> Chat for Agent<M> {
                 choice: ModelChoice::ToolCall(toolname, _, args),
                 ..
             } => Ok(self.tools.call(&toolname, args.to_string()).await?),
+            CompletionResponse {
+                choice:
+                    ModelChoice::Combined {
+                        content,
+                        tool_calls,
+                    },
+                ..
+            } => {
+                let mut responses = Vec::new();
+
+                // Add content if present
+                if let Some(msg) = content {
+                    responses.push(msg);
+                }
+
+                // Add tool call results
+                for (toolname, _, args) in tool_calls {
+                    let result = self.tools.call(&toolname, args.to_string()).await?;
+                    responses.push(result);
+                }
+
+                // Join all responses with newlines
+                Ok(responses.join("\n"))
+            }
         }
     }
 }
@@ -467,16 +491,14 @@ impl<M: CompletionModel> HistoryAgent<M> {
             // Add user's prompt to history
             let prompt = message.content();
 
-            println!("History: {:#?}", self.history);
-
             // Create completion request with current history
             let mut completion_builder =
                 self.agent.completion(&prompt, self.history.clone()).await?;
 
             // If max depth reached, clear the tools to force a chat response
-            if depth == 0 {
-                completion_builder = completion_builder.without_tools();
-            }
+            // if depth == 0 {
+            //     completion_builder = completion_builder.without_tools();
+            // }
 
             let completion_response = completion_builder.send().await?;
 
@@ -500,31 +522,87 @@ impl<M: CompletionModel> HistoryAgent<M> {
                     }
 
                     if depth == 0 {
-                        // quit here, we don't want to call tools
-                        return Ok(message.content().clone());
+                        return Ok("Executed tool. Continuing...".to_string());
                     }
 
                     self.history.push(Message::tool_call(
-                        id.clone(),
+                        id.to_string(),
                         toolname.clone(),
                         args.clone(),
                     ));
 
-                    // Execute tool call
-                    let tool_result = self.agent.tools.call(&toolname, args.to_string()).await?;
+                    // Call the tool and add its response to history
+                    let tool_response_content =
+                        self.agent.tools.call(&toolname, args.to_string()).await?;
 
-                    println!("Tool result: {:#?}", tool_result);
-
-                    let tool_response = Message::tool_response(id, tool_result);
+                    let tool_response =
+                        Message::tool_response(id.to_string(), tool_response_content.clone());
 
                     self.history.push(tool_response.clone());
 
-                    // Make the recursive call with decremented depth
-                    let response = self
-                        .send_message(tool_response.clone(), depth.saturating_sub(1))
-                        .await?;
+                    let message = Message::assistant("Executed tool. Continuing...");
 
-                    Ok(response)
+                    // Send another message to get the final response
+                    self.send_message(message, depth - 1).await
+                }
+                CompletionResponse {
+                    choice:
+                        ModelChoice::Combined {
+                            content,
+                            tool_calls,
+                        },
+                    ..
+                } => {
+                    // First, add the user's message to history if it's a chat message
+                    if let Message::Chat { .. } = &message {
+                        self.history.push(message.clone());
+                    }
+
+                    let mut responses = Vec::new();
+                    let has_tool_calls = !tool_calls.is_empty();
+
+                    // Create a single assistant message that contains both content and tool calls
+                    if let Some(msg) = content.clone() {
+                        // Add the content as an assistant message
+                        self.history.push(Message::assistant(msg.clone()));
+                        responses.push(msg.clone());
+                    }
+
+                    if depth == 0 {
+                        return Ok("Executed those tools. Continuing...".to_string());
+                    }
+
+                    // Process tool calls
+                    for (toolname, id, args) in tool_calls {
+                        // Add the tool call
+                        self.history.push(Message::tool_call(
+                            id.to_string(),
+                            toolname.clone(),
+                            args.clone(),
+                        ));
+
+                        // Execute the tool and get response
+                        let tool_response =
+                            self.agent.tools.call(&toolname, args.to_string()).await?;
+
+                        // Add the tool response to history
+                        self.history.push(Message::tool_response(
+                            id.to_string(),
+                            tool_response.clone(),
+                        ));
+
+                        responses.push(tool_response);
+                    }
+
+                    // let message = if let Some(msg) = content {
+                    //     Message::assistant(msg)
+                    // } else {
+                    let message = Message::assistant("Executed those tools. Continuing...");
+                    // };
+
+                    // If we have tool calls and depth > 0, we should get a final response
+                    // that incorporates both the content and tool results
+                    self.send_message(message, depth - 1).await
                 }
             }
         })
@@ -533,9 +611,8 @@ impl<M: CompletionModel> HistoryAgent<M> {
 
 impl<M: CompletionModel> ChatWithHistory for HistoryAgent<M> {
     async fn chat_with_history(&mut self, prompt: &str) -> Result<String, PromptError> {
-        let message = Message::user(prompt.to_string());
-        let response = self.send_message(message, 1).await?;
-        Ok(response)
+        let message = Message::user(prompt);
+        self.send_message(message, 1).await
     }
 }
 
