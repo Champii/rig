@@ -540,7 +540,9 @@ impl<M: CompletionModel> HistoryAgent<M> {
 
                     self.history.push(tool_response.clone());
 
-                    let message = Message::assistant("Executed tool. Continuing...");
+                    let message = Message::assistant(
+                        "Executed tool. Let's continue with the next step of the conversation.",
+                    );
 
                     // Send another message to get the final response
                     self.send_message(message, depth - 1).await
@@ -597,7 +599,9 @@ impl<M: CompletionModel> HistoryAgent<M> {
                     // let message = if let Some(msg) = content {
                     //     Message::assistant(msg)
                     // } else {
-                    let message = Message::assistant("Executed those tools. Continuing...");
+                    let message = Message::assistant(
+                        "Executed those tools. Let's continue with the next step of the conversation.",
+                    );
                     // };
 
                     // If we have tool calls and depth > 0, we should get a final response
@@ -612,7 +616,7 @@ impl<M: CompletionModel> HistoryAgent<M> {
 impl<M: CompletionModel> ChatWithHistory for HistoryAgent<M> {
     async fn chat_with_history(&mut self, prompt: &str) -> Result<String, PromptError> {
         let message = Message::user(prompt);
-        self.send_message(message, 1).await
+        self.send_message(message, 3).await
     }
 }
 
